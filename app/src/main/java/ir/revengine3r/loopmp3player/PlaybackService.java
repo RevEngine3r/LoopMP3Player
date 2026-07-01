@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
@@ -19,8 +20,14 @@ import java.io.IOException;
 /**
  * Foreground service that loops an MP3 file indefinitely.
  * Compatible with Android 4.0+ (API 14).
+ *
+ * Key fixes:
+ *  - setAudioStreamType(STREAM_MUSIC) required on API 14 for audio routing
+ *  - prepareAsync() + OnPreparedListener avoids ANR / crash on content:// URIs
  */
-public class PlaybackService extends Service {
+public class PlaybackService extends Service
+        implements MediaPlayer.OnPreparedListener,
+                   MediaPlayer.OnErrorListener {
 
     public static final String ACTION_PLAY = "ir.revengine3r.loopmp3player.ACTION_PLAY";
     public static final String ACTION_STOP = "ir.revengine3r.loopmp3player.ACTION_STOP";
@@ -50,7 +57,6 @@ public class PlaybackService extends Service {
             }
         }
 
-        // START_STICKY: if killed by OS, restart automatically
         return START_STICKY;
     }
 
@@ -70,20 +76,46 @@ public class PlaybackService extends Service {
 
     private void play(Uri uri) {
         releasePlayer();
-        mediaPlayer = new MediaPlayer();
         try {
-            mediaPlayer.setDataSource(this, uri);
+            mediaPlayer = new MediaPlayer();
+
+            // REQUIRED on Android 4.x to route audio to the speaker
+            //noinspection deprecation
+            mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+
             mediaPlayer.setLooping(true);
-            mediaPlayer.prepare();
-            mediaPlayer.start();
-        } catch (IOException | IllegalStateException e) {
+            mediaPlayer.setOnPreparedListener(this);
+            mediaPlayer.setOnErrorListener(this);
+            mediaPlayer.setDataSource(getApplicationContext(), uri);
+
+            // prepareAsync avoids blocking the service thread (prevents ANR/crash)
+            mediaPlayer.prepareAsync();
+
+        } catch (IOException | IllegalStateException | IllegalArgumentException e) {
+            releasePlayer();
             stopSelf();
         }
     }
 
+    /** Called when prepareAsync() finishes — safe to call start() here. */
+    @Override
+    public void onPrepared(MediaPlayer mp) {
+        mp.start();
+    }
+
+    /** Called on internal MediaPlayer error — release and stop service. */
+    @Override
+    public boolean onError(MediaPlayer mp, int what, int extra) {
+        releasePlayer();
+        stopSelf();
+        return true;
+    }
+
     private void releasePlayer() {
         if (mediaPlayer != null) {
-            if (mediaPlayer.isPlaying()) mediaPlayer.stop();
+            try {
+                if (mediaPlayer.isPlaying()) mediaPlayer.stop();
+            } catch (IllegalStateException ignored) {}
             mediaPlayer.release();
             mediaPlayer = null;
         }
@@ -94,7 +126,6 @@ public class PlaybackService extends Service {
     private void startForegroundWithNotification(String uriString) {
         createNotificationChannel();
 
-        // Tap notification -> open MainActivity
         Intent openApp = new Intent(this, MainActivity.class);
         openApp.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int piFlags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
@@ -102,12 +133,10 @@ public class PlaybackService extends Service {
                 : PendingIntent.FLAG_UPDATE_CURRENT;
         PendingIntent openPi = PendingIntent.getActivity(this, 0, openApp, piFlags);
 
-        // Stop action button in notification
         Intent stopIntent = new Intent(this, PlaybackService.class);
         stopIntent.setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 1, stopIntent, piFlags);
 
-        // Extract file name from URI
         String path = Uri.parse(uriString).getPath();
         String fileName = (path != null && path.contains("/"))
                 ? path.substring(path.lastIndexOf('/') + 1)
@@ -118,7 +147,7 @@ public class PlaybackService extends Service {
                 .setContentTitle(getString(R.string.app_name))
                 .setContentText(fileName)
                 .setContentIntent(openPi)
-                .addAction(android.R.drawable.ic_media_pause,
+                .addAction(android.R.drawable.ic_delete,
                         getString(R.string.btn_stop), stopPi)
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)

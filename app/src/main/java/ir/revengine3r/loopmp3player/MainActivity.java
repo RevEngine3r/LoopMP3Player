@@ -28,7 +28,6 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvFileName;
     private TextView tvStatus;
     private Button   btnPlayPause;
-    private Button   btnStop;
 
     private SharedPreferences prefs;
     private Uri               currentUri;
@@ -43,11 +42,9 @@ public class MainActivity extends AppCompatActivity {
         tvFileName   = findViewById(R.id.tvFileName);
         tvStatus     = findViewById(R.id.tvStatus);
         btnPlayPause = findViewById(R.id.btnPlayPause);
-        btnStop      = findViewById(R.id.btnStop);
 
         findViewById(R.id.btnBrowse).setOnClickListener(v -> checkPermissionAndBrowse());
         btnPlayPause.setOnClickListener(v -> togglePlayPause());
-        btnStop.setOnClickListener(v -> stopPlayback());
 
         // Restore last saved file
         String savedUri = prefs.getString(PREF_FILE_URI, null);
@@ -60,7 +57,6 @@ public class MainActivity extends AppCompatActivity {
             tvStatus.setText(R.string.status_no_file);
             btnPlayPause.setEnabled(false);
         }
-        btnStop.setEnabled(false);
     }
 
     // ---- permission -------------------------------------------------------
@@ -118,30 +114,25 @@ public class MainActivity extends AppCompatActivity {
             Uri uri = data.getData();
             if (uri == null) return;
 
-            // Persist permission so the URI survives app restarts (API 19+)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                 try {
                     getContentResolver().takePersistableUriPermission(
                             uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                } catch (SecurityException ignored) {
-                    // Some file managers don't support persistable permissions — ignore
-                }
+                } catch (SecurityException ignored) {}
             }
 
-            // Stop any current playback before switching file
             stopPlayback();
-
             currentUri = uri;
             prefs.edit().putString(PREF_FILE_URI, uri.toString()).apply();
             tvFileName.setText(fileNameFromUri(uri));
             btnPlayPause.setEnabled(true);
 
-            // AUTO-PLAY immediately after file is selected
+            // Auto-play immediately after selection
             startPlayback();
         }
     }
 
-    // ---- playback (delegates to PlaybackService) --------------------------
+    // ---- playback ---------------------------------------------------------
 
     private void togglePlayPause() {
         if (!isPlaying) startPlayback();
@@ -161,7 +152,6 @@ public class MainActivity extends AppCompatActivity {
         isPlaying = true;
         tvStatus.setText(R.string.status_playing);
         btnPlayPause.setText(R.string.btn_stop);
-        btnStop.setEnabled(true);
     }
 
     private void stopPlayback() {
@@ -173,7 +163,6 @@ public class MainActivity extends AppCompatActivity {
                 ? getString(R.string.status_ready)
                 : getString(R.string.status_no_file));
         btnPlayPause.setText(R.string.btn_play);
-        btnStop.setEnabled(false);
     }
 
     // ---- helpers ----------------------------------------------------------
