@@ -6,6 +6,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.res.AssetFileDescriptor;
+import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -21,9 +23,13 @@ import java.io.IOException;
  * Foreground service that loops an MP3 indefinitely.
  * Android 4.0+ (API 14) compatible.
  *
- * CRITICAL ORDER in onStartCommand:
- *   1. startForeground() FIRST — must happen within 5 s of startForegroundService()
- *   2. then prepareAsync() — async, does NOT block the call
+ * Permission strategy:
+ *   The Activity calls takePersistableUriPermission() with ACTION_OPEN_DOCUMENT,
+ *   so the system grants this process permanent read access to the URI.
+ *   The service opens it via ContentResolver — no SecurityException.
+ *
+ * startForeground() is called as the VERY FIRST statement in onStartCommand
+ *   (before any IO) to satisfy Android 8+ 5-second rule.
  */
 public class PlaybackService extends Service
         implements MediaPlayer.OnPreparedListener,
@@ -37,35 +43,37 @@ public class PlaybackService extends Service
     private static final int    NOTIF_ID   = 1;
 
     private MediaPlayer mediaPlayer;
+    private String      currentUriString;
 
     // ------------------------------------------------------------------ lifecycle
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null) {
+
+        // *** startForeground MUST be the very first call ***
+        // Even if the URI is missing we post the notification first,
+        // then bail out. This prevents ForegroundServiceDidNotStartInTimeException.
+        String uriString = (intent != null) ? intent.getStringExtra(EXTRA_URI) : null;
+        String action    = (intent != null) ? intent.getAction() : null;
+
+        if (ACTION_STOP.equals(action)) {
+            // For STOP we were not started via startForegroundService so no
+            // need to call startForeground — just stop.
             stopSelf();
             return START_NOT_STICKY;
         }
 
-        if (ACTION_STOP.equals(intent.getAction())) {
+        // For PLAY (or re-delivery after START_STICKY): call startForeground first
+        startForegroundWithNotification(
+                uriString != null ? uriString : "");
+
+        if (uriString == null) {
             stopSelf();
             return START_NOT_STICKY;
         }
 
-        if (ACTION_PLAY.equals(intent.getAction())) {
-            String uriString = intent.getStringExtra(EXTRA_URI);
-            if (uriString == null) {
-                stopSelf();
-                return START_NOT_STICKY;
-            }
-
-            // *** MUST call startForeground() immediately — before any async work ***
-            // Android 8+ requires this within 5 seconds of startForegroundService().
-            startForegroundWithNotification(uriString);
-
-            // Now start async preparation — safe because startForeground already called
-            play(Uri.parse(uriString));
-        }
+        currentUriString = uriString;
+        play(Uri.parse(uriString));
 
         return START_STICKY;
     }
@@ -89,19 +97,42 @@ public class PlaybackService extends Service
         try {
             mediaPlayer = new MediaPlayer();
 
-            // Required on Android 4.x to route audio to speaker
-            //noinspection deprecation
-            mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                // Modern API: AudioAttributes
+                mediaPlayer.setAudioAttributes(
+                        new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build());
+            } else {
+                // Legacy API needed for Android 4.x
+                //noinspection deprecation
+                mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+            }
 
             mediaPlayer.setLooping(true);
             mediaPlayer.setOnPreparedListener(this);
             mediaPlayer.setOnErrorListener(this);
-            mediaPlayer.setDataSource(getApplicationContext(), uri);
 
-            // Async — won't block or crash the service thread
+            // Open via AssetFileDescriptor so the service process uses
+            // the persisted URI permission granted by the Activity.
+            AssetFileDescriptor afd = getContentResolver()
+                    .openAssetFileDescriptor(uri, "r");
+            if (afd == null) {
+                releasePlayer();
+                stopSelf();
+                return;
+            }
+            mediaPlayer.setDataSource(
+                    afd.getFileDescriptor(),
+                    afd.getStartOffset(),
+                    afd.getLength());
+            afd.close();
+
             mediaPlayer.prepareAsync();
 
-        } catch (IOException | IllegalStateException | IllegalArgumentException | SecurityException e) {
+        } catch (IOException | IllegalStateException
+                | IllegalArgumentException | SecurityException e) {
             releasePlayer();
             stopSelf();
         }
@@ -109,7 +140,6 @@ public class PlaybackService extends Service
 
     @Override
     public void onPrepared(MediaPlayer mp) {
-        // Called on main thread when media is buffered and ready
         mp.start();
     }
 
@@ -132,11 +162,6 @@ public class PlaybackService extends Service
 
     // ------------------------------------------------------------------ notification
 
-    /**
-     * Builds and posts the foreground notification.
-     * Called SYNCHRONOUSLY at the top of onStartCommand so Android
-     * does not throw ForegroundServiceDidNotStartInTimeException.
-     */
     private void startForegroundWithNotification(String uriString) {
         createNotificationChannel();
 
@@ -151,10 +176,23 @@ public class PlaybackService extends Service
         stopIntent.setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 1, stopIntent, piFlags);
 
-        String path = Uri.parse(uriString).getPath();
-        String fileName = (path != null && path.contains("/"))
-                ? path.substring(path.lastIndexOf('/') + 1)
-                : uriString;
+        // Use saved display name if available, else extract from URI path
+        String fileName;
+        try {
+            SharedPreferencesHelper prefs = new SharedPreferencesHelper(
+                    getSharedPreferences(MainActivity.PREF_NAME, MODE_PRIVATE));
+            String saved = prefs.getString(MainActivity.PREF_FILE_NAME);
+            if (saved != null && !saved.isEmpty()) {
+                fileName = saved;
+            } else {
+                String path = Uri.parse(uriString).getPath();
+                fileName = (path != null && path.contains("/"))
+                        ? path.substring(path.lastIndexOf('/') + 1)
+                        : uriString;
+            }
+        } catch (Exception e) {
+            fileName = getString(R.string.app_name);
+        }
 
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_media_play)
@@ -173,12 +211,18 @@ public class PlaybackService extends Service
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "MP3 Playback",
+                    CHANNEL_ID, "MP3 Playback",
                     NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("Loop MP3 Player background playback");
             NotificationManager nm = getSystemService(NotificationManager.class);
             if (nm != null) nm.createNotificationChannel(channel);
         }
+    }
+
+    // Small helper to avoid importing SharedPreferences in the notification builder
+    private static class SharedPreferencesHelper {
+        private final android.content.SharedPreferences prefs;
+        SharedPreferencesHelper(android.content.SharedPreferences p) { this.prefs = p; }
+        String getString(String key) { return prefs.getString(key, null); }
     }
 }

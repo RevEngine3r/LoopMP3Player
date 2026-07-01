@@ -1,12 +1,15 @@
 package ir.revengine3r.loopmp3player;
 
 import android.Manifest;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -19,8 +22,9 @@ import androidx.core.content.ContextCompat;
 
 public class MainActivity extends AppCompatActivity {
 
-    public static final String PREF_NAME     = "mp3prefs";
-    public static final String PREF_FILE_URI = "last_file_uri";
+    public static final String PREF_NAME      = "mp3prefs";
+    public static final String PREF_FILE_URI  = "last_file_uri";
+    public static final String PREF_FILE_NAME = "last_file_name";
 
     private static final int REQUEST_PICK_AUDIO = 1;
     private static final int REQUEST_PERMISSION = 2;
@@ -46,11 +50,11 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btnBrowse).setOnClickListener(v -> checkPermissionAndBrowse());
         btnPlayPause.setOnClickListener(v -> togglePlayPause());
 
-        // Restore last saved file
-        String savedUri = prefs.getString(PREF_FILE_URI, null);
+        String savedUri  = prefs.getString(PREF_FILE_URI, null);
+        String savedName = prefs.getString(PREF_FILE_NAME, null);
         if (savedUri != null) {
             currentUri = Uri.parse(savedUri);
-            tvFileName.setText(fileNameFromUri(currentUri));
+            tvFileName.setText(savedName != null ? savedName : savedUri);
             tvStatus.setText(R.string.status_ready);
             btnPlayPause.setEnabled(true);
         } else {
@@ -93,9 +97,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ---- file picker ------------------------------------------------------
-
+    // Use ACTION_OPEN_DOCUMENT (not ACTION_GET_CONTENT) so the system grants
+    // a *persistable* URI permission that survives across process boundaries
+    // (i.e. the Service and BootReceiver can open it too).
     private void openFilePicker() {
-        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.setType("audio/*");
         i.addCategory(Intent.CATEGORY_OPENABLE);
         try {
@@ -114,20 +120,21 @@ public class MainActivity extends AppCompatActivity {
             Uri uri = data.getData();
             if (uri == null) return;
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                try {
-                    getContentResolver().takePersistableUriPermission(
-                            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                } catch (SecurityException ignored) {}
-            }
+            // Persist the URI permission so Service + BootReceiver can open it
+            getContentResolver().takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
             stopPlayback();
             currentUri = uri;
-            prefs.edit().putString(PREF_FILE_URI, uri.toString()).apply();
-            tvFileName.setText(fileNameFromUri(uri));
+
+            String displayName = queryDisplayName(uri);
+            prefs.edit()
+                    .putString(PREF_FILE_URI, uri.toString())
+                    .putString(PREF_FILE_NAME, displayName)
+                    .apply();
+            tvFileName.setText(displayName);
             btnPlayPause.setEnabled(true);
 
-            // Auto-play immediately after selection
             startPlayback();
         }
     }
@@ -139,7 +146,7 @@ public class MainActivity extends AppCompatActivity {
         else stopPlayback();
     }
 
-    private void startPlayback() {
+    void startPlayback() {
         if (currentUri == null) return;
         Intent intent = new Intent(this, PlaybackService.class);
         intent.setAction(PlaybackService.ACTION_PLAY);
@@ -167,10 +174,23 @@ public class MainActivity extends AppCompatActivity {
 
     // ---- helpers ----------------------------------------------------------
 
-    private String fileNameFromUri(Uri uri) {
-        String path = uri.getPath();
-        if (path == null) return uri.toString();
-        int cut = path.lastIndexOf('/');
-        return cut >= 0 ? path.substring(cut + 1) : path;
+    private String queryDisplayName(Uri uri) {
+        String name = null;
+        try {
+            ContentResolver cr = getContentResolver();
+            try (Cursor cursor = cr.query(uri, null, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    if (idx >= 0) name = cursor.getString(idx);
+                }
+            }
+        } catch (Exception ignored) {}
+        if (name == null) {
+            String path = uri.getPath();
+            name = (path != null && path.contains("/"))
+                    ? path.substring(path.lastIndexOf('/') + 1)
+                    : uri.toString();
+        }
+        return name;
     }
 }
