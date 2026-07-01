@@ -1,18 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Loop MP3 Player</string>
-    <string name="btn_browse">📂 Browse File</string>
-    <string name="btn_play">▶ Play</string>
-    <string name="btn_pause">⏸ Pause</string>
-    <string name="btn_stop">⏹ Stop</string>
-    <string name="no_file_selected">No file selected</string>
-    <string name="pick_audio">Select MP3 / Audio file</string>
-    <string name="no_file_manager">No file manager found. Please install one.</string>
-    <string name="perm_denied">Storage permission denied. Cannot read files.</string>
-    <string name="status_no_file">Select a file to begin</string>
-    <string name="status_ready">Ready to play</string>
-    <string name="status_playing">🔁 Looping…</string>
-    <string name="status_paused">⏸ Paused</string>
-    <string name="status_error">Playback error</string>
-    <string name="error_play">Cannot play file: </string>
+    <string name="app_name">MP3 Looper</string>
+    <string name="browse_button">Browse MP3</string>
+    <string name="enter_path_button">Enter Path</string>
+    <string name="selected_file_label">Saved MP3 file</string>
+    <string name="current_folder_label">Browse external storage</string>
+    <string name="storage_roots_label">Choose a storage folder</string>
+    <string name="up_button">Go Up</string>
+    <string name="status_idle">No MP3 selected yet.</string>
+    <string name="status_ready">Saved. Playback service will keep looping it.</string>
+    <string name="no_file_selected">No MP3 selected.</string>
+    <string name="saved_and_started">Saved path and started looping.</string>
+    <string name="notification_text">Looping the saved MP3 file</string>
+    <string name="empty_folder">No folders or MP3 files here.</string>
+    <string name="error_no_file_selected">No file selected.</string>
+    <string name="error_file_missing">Saved file is missing.</string>
+    <string name="error_storage_unavailable">External storage is not available.</string>
+    <string name="error_open_folder">Cannot open this folder.</string>
+    <string name="error_cannot_play">Cannot play the selected MP3.</string>
 </resources>
