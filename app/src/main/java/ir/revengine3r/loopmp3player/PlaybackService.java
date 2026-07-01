@@ -18,12 +18,12 @@ import androidx.core.app.NotificationCompat;
 import java.io.IOException;
 
 /**
- * Foreground service that loops an MP3 file indefinitely.
- * Compatible with Android 4.0+ (API 14).
+ * Foreground service that loops an MP3 indefinitely.
+ * Android 4.0+ (API 14) compatible.
  *
- * Key fixes:
- *  - setAudioStreamType(STREAM_MUSIC) required on API 14 for audio routing
- *  - prepareAsync() + OnPreparedListener avoids ANR / crash on content:// URIs
+ * CRITICAL ORDER in onStartCommand:
+ *   1. startForeground() FIRST — must happen within 5 s of startForegroundService()
+ *   2. then prepareAsync() — async, does NOT block the call
  */
 public class PlaybackService extends Service
         implements MediaPlayer.OnPreparedListener,
@@ -42,7 +42,10 @@ public class PlaybackService extends Service
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null) return START_NOT_STICKY;
+        if (intent == null) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
 
         if (ACTION_STOP.equals(intent.getAction())) {
             stopSelf();
@@ -51,10 +54,17 @@ public class PlaybackService extends Service
 
         if (ACTION_PLAY.equals(intent.getAction())) {
             String uriString = intent.getStringExtra(EXTRA_URI);
-            if (uriString != null) {
-                startForegroundWithNotification(uriString);
-                play(Uri.parse(uriString));
+            if (uriString == null) {
+                stopSelf();
+                return START_NOT_STICKY;
             }
+
+            // *** MUST call startForeground() immediately — before any async work ***
+            // Android 8+ requires this within 5 seconds of startForegroundService().
+            startForegroundWithNotification(uriString);
+
+            // Now start async preparation — safe because startForeground already called
+            play(Uri.parse(uriString));
         }
 
         return START_STICKY;
@@ -79,7 +89,7 @@ public class PlaybackService extends Service
         try {
             mediaPlayer = new MediaPlayer();
 
-            // REQUIRED on Android 4.x to route audio to the speaker
+            // Required on Android 4.x to route audio to speaker
             //noinspection deprecation
             mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
 
@@ -88,22 +98,21 @@ public class PlaybackService extends Service
             mediaPlayer.setOnErrorListener(this);
             mediaPlayer.setDataSource(getApplicationContext(), uri);
 
-            // prepareAsync avoids blocking the service thread (prevents ANR/crash)
+            // Async — won't block or crash the service thread
             mediaPlayer.prepareAsync();
 
-        } catch (IOException | IllegalStateException | IllegalArgumentException e) {
+        } catch (IOException | IllegalStateException | IllegalArgumentException | SecurityException e) {
             releasePlayer();
             stopSelf();
         }
     }
 
-    /** Called when prepareAsync() finishes — safe to call start() here. */
     @Override
     public void onPrepared(MediaPlayer mp) {
+        // Called on main thread when media is buffered and ready
         mp.start();
     }
 
-    /** Called on internal MediaPlayer error — release and stop service. */
     @Override
     public boolean onError(MediaPlayer mp, int what, int extra) {
         releasePlayer();
@@ -123,6 +132,11 @@ public class PlaybackService extends Service
 
     // ------------------------------------------------------------------ notification
 
+    /**
+     * Builds and posts the foreground notification.
+     * Called SYNCHRONOUSLY at the top of onStartCommand so Android
+     * does not throw ForegroundServiceDidNotStartInTimeException.
+     */
     private void startForegroundWithNotification(String uriString) {
         createNotificationChannel();
 
