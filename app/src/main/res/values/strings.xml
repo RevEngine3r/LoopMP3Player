@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Loop MP3 Player</string>
+    <string name="btn_browse">📂 Browse File</string>
+    <string name="btn_play">▶ Play</string>
+    <string name="btn_pause">⏸ Pause</string>
+    <string name="btn_stop">⏹ Stop</string>
+    <string name="no_file_selected">No file selected</string>
+    <string name="pick_audio">Select MP3 / Audio file</string>
+    <string name="no_file_manager">No file manager found. Please install one.</string>
+    <string name="perm_denied">Storage permission denied. Cannot read files.</string>
+    <string name="status_no_file">Select a file to begin</string>
+    <string name="status_ready">Ready to play</string>
+    <string name="status_playing">🔁 Looping…</string>
+    <string name="status_paused">⏸ Paused</string>
+    <string name="status_error">Playback error</string>
+    <string name="error_play">Cannot play file: </string>
+</resources>
