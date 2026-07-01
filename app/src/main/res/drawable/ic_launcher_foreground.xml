@@ -4,9 +4,20 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-  <!-- music note disc ring -->
-  <path
-      android:fillColor="#7EC8C8"
-      android:pathData="M54,22 A32,32 0 1,1 53.99,22 Z M54,36 A18,18 0 1,0 54.01,36 Z"/>
-  <circle android:fillColor="#7EC8C8" android:cx="54" android:cy="54" android:r="9"/>
+    <!-- outer ring -->
+    <path
+        android:fillColor="#7EC8C8"
+        android:pathData="M54,22
+            m-32,0
+            a32,32 0 1,0 64,0
+            a32,32 0 1,0 -64,0
+            M54,36
+            m-18,0
+            a18,18 0 1,1 36,0
+            a18,18 0 1,1 -36,0Z" />
+    <!-- centre dot -->
+    <path
+        android:fillColor="#7EC8C8"
+        android:pathData="M54,45
+            a9,9 0 1,0 0.01,0Z" />
 </vector>
