@@ -19,7 +19,6 @@ import androidx.core.content.ContextCompat;
 
 public class MainActivity extends AppCompatActivity {
 
-    // public so BootReceiver can reference them
     public static final String PREF_NAME     = "mp3prefs";
     public static final String PREF_FILE_URI = "last_file_uri";
 
@@ -118,16 +117,27 @@ public class MainActivity extends AppCompatActivity {
         if (req == REQUEST_PICK_AUDIO && res == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri == null) return;
+
+            // Persist permission so the URI survives app restarts (API 19+)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                getContentResolver().takePersistableUriPermission(
-                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                try {
+                    getContentResolver().takePersistableUriPermission(
+                            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (SecurityException ignored) {
+                    // Some file managers don't support persistable permissions — ignore
+                }
             }
+
+            // Stop any current playback before switching file
             stopPlayback();
+
             currentUri = uri;
             prefs.edit().putString(PREF_FILE_URI, uri.toString()).apply();
             tvFileName.setText(fileNameFromUri(uri));
-            tvStatus.setText(R.string.status_ready);
             btnPlayPause.setEnabled(true);
+
+            // AUTO-PLAY immediately after file is selected
+            startPlayback();
         }
     }
 
